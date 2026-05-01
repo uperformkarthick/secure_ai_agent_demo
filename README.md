@@ -308,11 +308,92 @@ Invoke a tool by name.
 
 ---
 
-## AWS Configuration
+## AWS & Amazon Bedrock Setup
 
-The agent uses **Amazon Bedrock** with:
-- **Model**: `anthropic.claude-3-sonnet-20240229-v1:0`
-- **Region**: Configurable via `AWS_REGION`
-- **Auth**: AWS credentials via env vars or `~/.aws/credentials`
+### 1. Create an AWS account
 
-Ensure your IAM user/role has the `bedrock:InvokeModel` permission for the chosen model.
+If you don't have one, sign up at [https://aws.amazon.com](https://aws.amazon.com). A free-tier account is sufficient to get started — Bedrock charges are per token.
+
+---
+
+### 2. Enable Claude 3 Sonnet in Amazon Bedrock
+
+Amazon Bedrock models must be explicitly enabled before use. This is a one-time step per region.
+
+1. Open the [AWS Console](https://console.aws.amazon.com) and switch to your target region (e.g. **us-east-1**).
+2. Navigate to **Amazon Bedrock** → **Model access** (left sidebar).
+3. Click **Manage model access**.
+4. Find **Anthropic → Claude 3 Sonnet** and tick the checkbox.
+5. Click **Request model access** and wait for the status to change to **Access granted** (usually instant).
+
+> Claude 3 Sonnet is available in `us-east-1`, `us-west-2`, `ap-southeast-1`, `ap-northeast-1`, `eu-central-1`, and others. Make sure `AWS_REGION` in your `.env` matches the region where you enabled the model.
+
+---
+
+### 3. Create an IAM user with Bedrock permissions
+
+> **Recommended:** use an IAM user with only the permissions this project needs, not your root account credentials.
+
+1. Go to **IAM** → **Users** → **Create user**.
+2. Give it a name (e.g. `bank-ai-agent`), select **Programmatic access**.
+3. On the permissions step, choose **Attach policies directly** and create a new inline policy with this JSON:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockInvoke",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+      ],
+      "Resource": "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+    }
+  ]
+}
+```
+
+4. Complete the user creation and download (or copy) the **Access key ID** and **Secret access key**. These are the values you'll enter for `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`.
+
+> If you prefer to use an **IAM role** (e.g. on EC2 or ECS), attach the same policy to the role — the SDK picks up the role credentials automatically and no key/secret are needed in `.env`.
+
+---
+
+### 4. Supply credentials to the application
+
+**Option A — environment setup script (recommended)**
+
+```bash
+./setup.sh
+```
+
+The script prompts for all values, hides sensitive input, and writes `.env` with `chmod 600`.
+
+**Option B — manual**
+
+```bash
+cp .env.example .env
+# Fill in AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+```
+
+**Option C — AWS credentials file**
+
+If you have the AWS CLI installed and already ran `aws configure`, the SDK reads `~/.aws/credentials` automatically. Leave `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` blank in `.env` and set your profile name:
+
+```bash
+# In .env
+AWS_PROFILE=default
+```
+
+---
+
+### Summary
+
+| What | Where |
+|---|---|
+| Enable Claude 3 Sonnet | AWS Console → Bedrock → Model access |
+| IAM permission needed | `bedrock:InvokeModel` on the Sonnet model ARN |
+| Credentials in project | `.env` or `~/.aws/credentials` or IAM role |
+| Supported regions | `us-east-1`, `us-west-2`, `eu-central-1`, `ap-southeast-1`, and others |
