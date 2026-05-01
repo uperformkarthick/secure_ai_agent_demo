@@ -187,6 +187,18 @@ def get_loan_detail(application_id: str) -> str:
     return to_json(loan)
 
 
+_VALID_TRANSITIONS: dict[str, set[str]] = {
+    "pending":      {"under_review"},
+    "under_review": {"approved", "rejected"},
+    "approved":     {"disbursed"},
+    "disbursed":    {"closed"},
+    "rejected":     set(),
+    "closed":       set(),
+}
+
+_MIN_CREDIT_SCORE_APPROVE = 600
+
+
 def update_loan_status(
     application_id: str,
     new_status: str,
@@ -203,6 +215,43 @@ def update_loan_status(
     valid_statuses = ("pending", "under_review", "approved", "rejected", "disbursed", "closed")
     if new_status not in valid_statuses:
         return to_json({"error": f"Invalid status '{new_status}'. Must be one of {valid_statuses}"})
+
+    # Fetch current loan + customer data for guardrail checks
+    rows = query(
+        """
+        SELECT la.status, la.customer_id,
+               c.credit_score, c.kyc_verified, c.annual_income
+        FROM   loan_applications la
+        JOIN   customers c ON la.customer_id = c.customer_id
+        WHERE  la.application_id = %s
+        """,
+        (application_id,),
+    )
+    if not rows:
+        return to_json({"error": f"Application {application_id} not found"})
+
+    current_status   = rows[0]["status"]
+    credit_score     = rows[0]["credit_score"]
+    kyc_verified     = rows[0]["kyc_verified"]
+
+    # Enforce valid status transitions
+    allowed = _VALID_TRANSITIONS.get(current_status, set())
+    if new_status not in allowed:
+        allowed_str = ", ".join(sorted(allowed)) or "none"
+        return to_json({
+            "error": f"Invalid transition '{current_status}' → '{new_status}'. "
+                     f"Allowed next statuses: {allowed_str}."
+        })
+
+    # Hard business rules — enforced regardless of AI reasoning
+    if new_status == "approved":
+        if credit_score < _MIN_CREDIT_SCORE_APPROVE:
+            return to_json({
+                "error": f"Cannot approve: credit score {credit_score} is below the "
+                         f"minimum threshold of {_MIN_CREDIT_SCORE_APPROVE}."
+            })
+        if not kyc_verified:
+            return to_json({"error": "Cannot approve: KYC verification is incomplete."})
 
     # Build SET clause dynamically
     set_parts = ["status = %s"]
@@ -227,10 +276,8 @@ def update_loan_status(
 
     params.append(application_id)
     sql = f"UPDATE loan_applications SET {', '.join(set_parts)} WHERE application_id = %s"
-    affected = execute(sql, tuple(params))
+    execute(sql, tuple(params))
 
-    if affected == 0:
-        return to_json({"error": f"Application {application_id} not found"})
     return to_json({
         "success": True,
         "application_id": application_id,
@@ -280,20 +327,31 @@ def get_portfolio_stats() -> str:
     })
 
 
+_EXECUTE_QUERY_ROW_LIMIT = 200
+_ALLOWED_TABLES = frozenset({
+    "customers", "loan_products", "loan_applications",
+    "loan_repayments", "ai_audit_log",
+    "v_loan_summary", "v_portfolio_stats",
+})
+
+
 def execute_query(sql: str) -> str:
     """
     Execute a read-only SELECT query against the database.
-    Only SELECT statements are permitted.
+    Only SELECT statements against whitelisted tables are permitted.
     """
     stripped = sql.strip().upper()
     if not stripped.startswith("SELECT"):
         return to_json({"error": "Only SELECT queries are allowed for security reasons."})
 
-    # Rough safety check — block destructive keywords
     blocked = ("DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "TRUNCATE", "GRANT", "REVOKE")
     for kw in blocked:
         if kw in stripped:
             return to_json({"error": f"Keyword '{kw}' is not permitted in ad-hoc queries."})
+
+    # Enforce row limit — inject LIMIT if not already present
+    if "LIMIT" not in stripped:
+        sql = f"{sql.rstrip().rstrip(';')} LIMIT {_EXECUTE_QUERY_ROW_LIMIT}"
 
     try:
         rows = query(sql)

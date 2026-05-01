@@ -6,6 +6,7 @@ Run:  python -m ui.cli
 """
 
 import asyncio
+import re
 import sys
 
 from rich.console import Console
@@ -49,6 +50,27 @@ QUICK_COMMANDS = {
     "/stats":   "Call get_portfolio_stats and give me a concise summary with key metrics.",
     "/pending": "Show all loan applications with status 'pending' in a table format.",
 }
+
+_MAX_INPUT_LENGTH = 2000
+_BLOCKED_PATTERNS = [
+    r"ignore\s+(previous|all|above)\s+instructions",
+    r"you\s+are\s+now\s+",
+    r"pretend\s+(you\s+are|to\s+be)",
+    r"jailbreak",
+    r"bypass\s+(guardrail|filter|safety)",
+    r"disregard\s+(your|all)\s+(rules|instructions|guidelines)",
+    r";\s*(DELETE|DROP|UPDATE|INSERT)\b",
+]
+
+
+def _validate_input(text: str) -> str | None:
+    """Returns an error message if input fails guardrail checks, else None."""
+    if len(text) > _MAX_INPUT_LENGTH:
+        return f"Input too long ({len(text)} chars). Please keep it under {_MAX_INPUT_LENGTH} characters."
+    for pattern in _BLOCKED_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            return "Input contains disallowed content and cannot be processed."
+    return None
 
 
 async def stream_response(agent: BankAgent, user_input: str):
@@ -106,6 +128,12 @@ async def main():
             if user_input.lower() == "/reset":
                 await agent.reset()
                 console.print("[yellow]✓ Conversation reset.[/yellow]\n")
+                continue
+
+            # Input guardrail
+            error = _validate_input(user_input)
+            if error:
+                console.print(f"[bold red]⛔ Guardrail:[/bold red] {error}\n")
                 continue
 
             # Expand quick commands

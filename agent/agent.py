@@ -24,11 +24,13 @@ from .prompts import SYSTEM_PROMPT
 load_dotenv()
 log = logging.getLogger(__name__)
 
-MODEL_ID        = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
-AWS_REGION      = os.getenv("AWS_REGION", "us-east-1")
-MAX_ITER        = int(os.getenv("MAX_AGENT_ITERATIONS", "10"))
-TEMPERATURE     = float(os.getenv("AGENT_TEMPERATURE", "0.1"))
-MCP_SERVER_URL  = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
+MODEL_ID            = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+AWS_REGION          = os.getenv("AWS_REGION", "us-east-1")
+MAX_ITER            = int(os.getenv("MAX_AGENT_ITERATIONS", "10"))
+TEMPERATURE         = float(os.getenv("AGENT_TEMPERATURE", "0.1"))
+MCP_SERVER_URL      = os.getenv("MCP_SERVER_URL", "http://localhost:8000")
+GUARDRAIL_ID        = os.getenv("BEDROCK_GUARDRAIL_ID", "")
+GUARDRAIL_VERSION   = os.getenv("BEDROCK_GUARDRAIL_VERSION", "DRAFT")
 
 
 # ── Bedrock client ─────────────────────────────────────────────────────────────
@@ -106,16 +108,19 @@ class BankAgent:
 
     def _invoke_bedrock(self) -> dict:
         """Send current conversation to Bedrock and return the raw response."""
-        return self.bedrock.converse(
+        kwargs: dict[str, Any] = dict(
             modelId=MODEL_ID,
             system=[{"text": SYSTEM_PROMPT}],
             messages=self.conversation,
             toolConfig={"tools": self.bedrock_tools},
-            inferenceConfig={
-                "temperature": TEMPERATURE,
-                "maxTokens": 4096,
-            },
+            inferenceConfig={"temperature": TEMPERATURE, "maxTokens": 4096},
         )
+        if GUARDRAIL_ID:
+            kwargs["guardrailConfig"] = {
+                "guardrailIdentifier": GUARDRAIL_ID,
+                "guardrailVersion": GUARDRAIL_VERSION,
+            }
+        return self.bedrock.converse(**kwargs)
 
     # ── Agentic loop ──────────────────────────────────────────────────────────
 
