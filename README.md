@@ -316,21 +316,7 @@ If you don't have one, sign up at [https://aws.amazon.com](https://aws.amazon.co
 
 ---
 
-### 2. Enable Claude 3 Sonnet in Amazon Bedrock
-
-Amazon Bedrock models must be explicitly enabled before use. This is a one-time step per region.
-
-1. Open the [AWS Console](https://console.aws.amazon.com) and switch to your target region (e.g. **us-east-1**).
-2. Navigate to **Amazon Bedrock** → **Model access** (left sidebar).
-3. Click **Manage model access**.
-4. Find **Anthropic → Claude 3 Sonnet** and tick the checkbox.
-5. Click **Request model access** and wait for the status to change to **Access granted** (usually instant).
-
-> Claude 3 Sonnet is available in `us-east-1`, `us-west-2`, `ap-southeast-1`, `ap-northeast-1`, `eu-central-1`, and others. Make sure `AWS_REGION` in your `.env` matches the region where you enabled the model.
-
----
-
-### 3. Create an IAM user with Bedrock permissions
+### 2. Create an IAM user with Bedrock permissions
 
 > **Recommended:** use an IAM user with only the permissions this project needs, not your root account credentials.
 
@@ -393,7 +379,6 @@ AWS_PROFILE=default
 
 | What | Where |
 |---|---|
-| Enable Claude 3 Sonnet | AWS Console → Bedrock → Model access |
 | IAM permission needed | `bedrock:InvokeModel` on the Sonnet model ARN |
 | Credentials in project | `.env` or `~/.aws/credentials` or IAM role |
 | Supported regions | `us-east-1`, `us-west-2`, `eu-central-1`, `ap-southeast-1`, and others |
