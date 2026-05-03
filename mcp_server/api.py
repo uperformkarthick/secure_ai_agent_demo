@@ -6,18 +6,48 @@ Endpoints:
   GET  /health      — liveness probe
   GET  /tools       — list all available tools with their schemas
   POST /tools/call  — invoke a tool by name with arguments
+  GET  /sse         — MCP SSE transport (Claude Desktop)
+  POST /messages/   — MCP SSE message handler (Claude Desktop)
 """
 import logging
+from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Form, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from mcp.server import Server as MCPServer
+from mcp.server.sse import SseServerTransport
+from mcp.types import TextContent, Tool
 from pydantic import BaseModel
+from starlette.requests import Request
 
 from . import tools as T
+from .auth import (
+    ENABLE_AUTH,
+    TOKEN_EXPIRY,
+    create_access_token,
+    validate_token,
+    verify_client,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [MCP-API] %(message)s")
 log = logging.getLogger(__name__)
 
 app = FastAPI(title="Bank AI MCP REST Server", version="1.0.0")
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+_bearer = HTTPBearer(auto_error=False)
+
+
+def require_auth(credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer)):
+    if not ENABLE_AUTH:
+        return
+    if credentials is None or not validate_token(credentials.credentials):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing Bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 # ── Tool definitions ──────────────────────────────────────────────────────────
 
@@ -155,6 +185,46 @@ TOOL_MAP = {
 }
 
 
+# ── MCP SSE server (Claude Desktop) ──────────────────────────────────────────
+
+_mcp = MCPServer("bank-ai-mcp-server")
+
+
+@_mcp.list_tools()
+async def _list_mcp_tools():
+    return [
+        Tool(name=t["name"], description=t.get("description", ""), inputSchema=t["inputSchema"])
+        for t in TOOLS
+    ]
+
+
+@_mcp.call_tool()
+async def _call_mcp_tool(name: str, arguments: dict):
+    fn = TOOL_MAP.get(name)
+    if fn is None:
+        return [TextContent(type="text", text=f'{{"error": "Unknown tool: {name}"}}')]
+    try:
+        result = fn(arguments)
+    except Exception as exc:
+        log.exception("MCP tool %s raised an exception", name)
+        result = f'{{"error": "{exc}"}}'
+    return [TextContent(type="text", text=result)]
+
+
+_sse = SseServerTransport("/messages/")
+
+
+@app.get("/sse", dependencies=[Depends(require_auth)])
+async def sse_endpoint(request: Request):
+    async with _sse.connect_sse(request.scope, request.receive, request._send) as streams:
+        await _mcp.run(streams[0], streams[1], _mcp.create_initialization_options())
+
+
+@app.post("/messages/")
+async def messages_endpoint(request: Request):
+    await _sse.handle_post_message(request.scope, request.receive, request._send)
+
+
 # ── Request / Response models ─────────────────────────────────────────────────
 
 class ToolCallRequest(BaseModel):
@@ -168,17 +238,47 @@ class ToolCallResponse(BaseModel):
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+@app.get("/.well-known/oauth-authorization-server")
+def oauth_metadata(request: Request):
+    base = str(request.base_url).rstrip("/")
+    return {
+        "issuer": base,
+        "token_endpoint": f"{base}/token",
+        "grant_types_supported": ["client_credentials"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post"],
+        "response_types_supported": ["token"],
+    }
+
+
+@app.post("/token")
+def token_endpoint(
+    grant_type: str = Form(...),
+    client_id: str = Form(...),
+    client_secret: str = Form(...),
+):
+    if grant_type != "client_credentials":
+        raise HTTPException(status_code=400, detail="Only client_credentials grant type is supported")
+    if not verify_client(client_id, client_secret):
+        raise HTTPException(status_code=401, detail="Invalid client credentials")
+    log.info("Token issued for client_id=%s", client_id)
+    return {
+        "access_token": create_access_token(),
+        "token_type": "Bearer",
+        "expires_in": TOKEN_EXPIRY,
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.get("/tools")
+@app.get("/tools", dependencies=[Depends(require_auth)])
 def list_tools():
     return {"tools": TOOLS}
 
 
-@app.post("/tools/call", response_model=ToolCallResponse)
+@app.post("/tools/call", response_model=ToolCallResponse, dependencies=[Depends(require_auth)])
 def call_tool(req: ToolCallRequest):
     log.info("Tool called: %s  args=%s", req.name, str(req.arguments)[:200])
     fn = TOOL_MAP.get(req.name)

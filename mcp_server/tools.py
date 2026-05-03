@@ -4,7 +4,7 @@ All MCP tool implementations — called by the MCP server
 and invoked by the Bedrock agent via tool_use.
 """
 import json
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from .db import query, execute
@@ -16,7 +16,7 @@ def _serial(obj):
     """JSON-serialise MySQL types (Decimal, datetime, date)."""
     if isinstance(obj, Decimal):
         return float(obj)
-    if isinstance(obj, (datetime,)):
+    if isinstance(obj, (datetime, date)):
         return obj.isoformat()
     raise TypeError(f"Not serialisable: {type(obj)}")
 

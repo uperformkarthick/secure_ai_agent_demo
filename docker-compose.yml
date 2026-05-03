@@ -41,6 +41,21 @@ services:
       retries: 5
       start_period: 10s
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: bank_ai_caddy
+    restart: unless-stopped
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
   app:
     build: .
     container_name: bank_ai_agent
@@ -55,3 +70,5 @@ services:
 
 volumes:
   mysql_data:
+  caddy_data:
+  caddy_config:
