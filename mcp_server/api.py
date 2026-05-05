@@ -217,7 +217,7 @@ _sse = SseServerTransport("/messages/")
 @app.get("/sse", dependencies=[Depends(require_auth)])
 async def sse_endpoint(request: Request):
     async with _sse.connect_sse(request.scope, request.receive, request._send) as streams:
-        await _mcp.run(streams[0], streams[1], _mcp.create_initialization_options())
+        await _mcp.run(streams[0], streams[1], _mcp.create_initialization_options(), stateless=True)
 
 
 @app.post("/messages/")
